@@ -98,7 +98,16 @@ export async function POST(request: NextRequest) {
   if (pareceAprovado && email) {
     const { error } = await admin.auth.admin.inviteUserByEmail(email, {
       data: { nome },
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      // Vai direto pra /definir-senha (Client Component) e NÃO para
+      // /auth/callback: o link de convite da Supabase manda o token como
+      // fragmento de URL (#access_token=...), e fragmento nunca chega ao
+      // servidor. Se o redirect passasse por uma rota de servidor que faz
+      // 302 pra outra página (como /auth/callback fazia), o fragmento se
+      // perderia no meio do caminho e a sessão nunca seria criada. O
+      // cliente Supabase do browser (createBrowserClient, com
+      // detectSessionInUrl ligado por padrão) só consegue ler esse
+      // fragmento se ele já estiver na URL quando a página carrega.
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/definir-senha`,
     });
     // Se o e-mail já tem conta (recompra, ou webhook duplicado), o
     // inviteUserByEmail retorna erro "already been registered" — não é um
