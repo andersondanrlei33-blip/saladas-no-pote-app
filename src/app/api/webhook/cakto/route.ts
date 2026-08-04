@@ -1,22 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-/** Webhook da Cakto — "compra aprovada" chama essa rota. A Cakto não deixa
- *  claro na documentação pública o formato exato do corpo enviado pra URL
- *  de destino (só documenta a API de configuração dos webhooks), então
- *  aqui a gente:
+/** Webhook da Cakto — "compra aprovada" chama essa rota. Formato do corpo
+ *  confirmado no modelo de exemplo do próprio painel da Cakto (tela de
+ *  criação do webhook):
+ *    { "secret": "...", "event": "purchase_approved",
+ *      "data": { "id", "refId", "customer": { "name","email","phone",... },
+ *                "baseAmount", "status": "paid", ... } }
+ *
+ *  Aqui a gente:
  *   1. SEMPRE guarda o payload bruto em `compras.raw_payload`, mesmo que a
  *      extração abaixo falhe — assim dá pra conferir o formato real e
- *      ajustar os campos com o "Evento de Teste Webhook" da Cakto sem
- *      perder nenhum evento.
+ *      ajustar os campos com o "Testar" do webhook na Cakto sem perder
+ *      nenhum evento.
  *   2. Tenta extrair email/nome/id da transação/status em alguns formatos
- *      comuns, sem travar se algum campo não existir.
+ *      (o confirmado primeiro, variações depois como fallback).
  *   3. Só libera acesso (cria a conta e manda o e-mail de convite) se
  *      achar um e-mail e o evento parecer de aprovação.
  *
- *  Segurança: a URL configurada na Cakto deve ser
- *  https://app.brenoplus.online/api/webhook/cakto?secret=SEU_SEGREDO — sem
- *  o segredo certo na query string, a rota rejeita a chamada. */
+ *  Segurança: a Cakto manda o segredo configurado no campo "secret" do
+ *  próprio corpo JSON (não como header nem query string). A gente valida
+ *  esse campo; mantém a checagem por query string (?secret=...) como
+ *  fallback, sem custo, caso algum outro disparo use esse formato. */
 
 function primeiroValor(obj: unknown, caminhos: string[]): string | null {
   for (const caminho of caminhos) {
@@ -36,17 +41,18 @@ function primeiroValor(obj: unknown, caminhos: string[]): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  const secretEsperado = process.env.CAKTO_WEBHOOK_SECRET;
-  const secretRecebido = request.nextUrl.searchParams.get("secret");
-  if (!secretEsperado || secretRecebido !== secretEsperado) {
-    return NextResponse.json({ erro: "não autorizado" }, { status: 401 });
-  }
-
   let payload: unknown;
   try {
     payload = await request.json();
   } catch {
     return NextResponse.json({ erro: "corpo inválido" }, { status: 400 });
+  }
+
+  const secretEsperado = process.env.CAKTO_WEBHOOK_SECRET;
+  const secretRecebido =
+    primeiroValor(payload, ["secret"]) ?? request.nextUrl.searchParams.get("secret");
+  if (!secretEsperado || secretRecebido !== secretEsperado) {
+    return NextResponse.json({ erro: "não autorizado" }, { status: 401 });
   }
 
   const evento = primeiroValor(payload, ["event", "evento", "data.status", "status"]);
@@ -64,8 +70,14 @@ export async function POST(request: NextRequest) {
     "name",
     "buyer.name",
   ]);
-  const transacaoId = primeiroValor(payload, ["data.id", "id", "data.transaction_id", "transaction_id"]);
-  const valorTexto = primeiroValor(payload, ["data.amount", "amount", "data.baseAmount", "valor"]);
+  const transacaoId = primeiroValor(payload, [
+    "data.id",
+    "id",
+    "data.refId",
+    "data.transaction_id",
+    "transaction_id",
+  ]);
+  const valorTexto = primeiroValor(payload, ["data.baseAmount", "data.amount", "amount", "valor"]);
 
   const pareceAprovado =
     evento !== null && /aprovad|approved|paid|pago/i.test(evento);
