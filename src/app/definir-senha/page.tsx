@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -11,6 +11,27 @@ export default function DefinirSenhaPage() {
   const [confirmacao, setConfirmacao] = useState("");
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Supabase manda erro (ex: link já usado ou expirado) como parâmetro no
+    // fragmento da URL, tipo #error=access_denied&error_code=otp_expired.
+    // Isso acontece com frequência quando o antivírus de e-mail ou o "Link
+    // seguro" do Gmail/Outlook abre o link sozinho pra escanear antes da
+    // pessoa clicar de verdade, o que consome o token (que só pode ser
+    // usado uma vez). Sem essa checagem, a página mostrava o formulário
+    // normalmente e só falhava (com mensagem genérica) depois que a pessoa
+    // já tinha digitado a senha duas vezes.
+    const hash = window.location.hash;
+    if (hash.includes("error=")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const desc = params.get("error_description");
+      setErro(
+        desc
+          ? `Esse link não é mais válido (${decodeURIComponent(desc.replace(/\+/g, " "))}). Peça um novo e-mail e abra o link assim que ele chegar.`
+          : "Esse link não é mais válido. Peça um novo e-mail e abra o link assim que ele chegar.",
+      );
+    }
+  }, []);
 
   async function salvar(e: FormEvent) {
     e.preventDefault();
@@ -30,7 +51,10 @@ export default function DefinirSenhaPage() {
     setCarregando(false);
 
     if (error) {
-      setErro("Não deu pra salvar a senha. Tente abrir o link do e-mail de novo.");
+      // Inclui error.message pra facilitar diagnóstico caso aconteça de
+      // novo (ex: "Auth session missing" indica que o link não chegou a
+      // criar sessão — geralmente o mesmo caso de link já consumido acima).
+      setErro(`Não deu pra salvar a senha (${error.message}). Tente abrir o link do e-mail de novo.`);
       return;
     }
 
