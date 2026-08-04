@@ -6,7 +6,20 @@ import { createClient } from "@/lib/supabase/client";
 
 export default function DefinirSenhaPage() {
   const router = useRouter();
-  const supabase = createClient();
+  // IMPORTANTE: precisa ser UM SÓ cliente pra vida inteira do componente,
+  // criado com useState(() => ...) (inicializador "preguiçoso"). Antes
+  // estava como "const supabase = createClient()" direto no corpo da
+  // função — isso cria uma instância NOVA a cada re-render (e o componente
+  // re-renderiza a cada tecla digitada nos campos de senha). Cada instância
+  // nova dispara de novo, em segundo plano, a leitura do token que vem no
+  // fragmento da URL (#access_token=...). A primeira instância lê o token
+  // e already limpa o fragmento da URL; qualquer instância criada DEPOIS
+  // (ex: ao digitar a senha) não encontra mais nada pra ler e fica sem
+  // sessão — só que o app continuava usando essa instância "vazia" pra
+  // salvar a senha, daí o erro "Auth session missing!" mesmo com o link
+  // certo. Com useState, a mesma instância (que já tem a sessão) é reusada
+  // em todos os re-renders.
+  const [supabase] = useState(() => createClient());
   const [senha, setSenha] = useState("");
   const [confirmacao, setConfirmacao] = useState("");
   const [carregando, setCarregando] = useState(false);
@@ -47,6 +60,23 @@ export default function DefinirSenhaPage() {
     }
 
     setCarregando(true);
+
+    // Rede de segurança extra: em teoria a sessão já devia existir (o
+    // cliente único do useState processa o token do link assim que a
+    // página carrega), mas se por algum motivo ainda não processou (ex:
+    // rede lenta), espera um instante e confere de novo antes de desistir
+    // — evita mostrar "Auth session missing" por pura demora.
+    let { data: sessaoAtual } = await supabase.auth.getSession();
+    if (!sessaoAtual.session) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      ({ data: sessaoAtual } = await supabase.auth.getSession());
+    }
+    if (!sessaoAtual.session) {
+      setCarregando(false);
+      setErro("Esse link não é mais válido. Peça um novo e-mail e abra o link assim que ele chegar.");
+      return;
+    }
+
     const { error } = await supabase.auth.updateUser({ password: senha });
     setCarregando(false);
 
